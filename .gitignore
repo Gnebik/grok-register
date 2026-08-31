@@ -25,3 +25,6 @@ Thumbs.db
 .vscode/
 .idea/
 outlook_tokens.json
+
+# local-only helpers (contain hardcoded grok2api admin creds)
+manual_push_build.py
