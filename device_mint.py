@@ -13,30 +13,22 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
 SCOPE = "openid profile email offline_access grok-cli:access api:access"
-PROXY = os.getenv("GROK_PROXY") or "http://127.0.0.1:7897"
+# auth.x.ai 实测: 7891 通、7897/CLIPROXY 被 RST; 注册(accounts.x.ai)走 GROK_PROXY 默认 7897 通
+PROXY = os.getenv("DEVICE_PROXY") or os.getenv("GROK_PROXY") or "http://127.0.0.1:7891"
 
 
 def _http_json(url, method="GET", form=None, timeout=40):
-    opener = urllib.request.build_opener(
-        urllib.request.ProxyHandler({"https": PROXY, "http": PROXY}))
-    data = urllib.parse.urlencode(form).encode() if form else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    req.add_header("Accept", "application/json")
-    req.add_header("User-Agent", "grok-register-cpa/1.0")
+    # 2026-08-16: urllib 的 TLS 指纹被 auth.x.ai 掐断 (SSL EOF / RST), 改用 curl_cffi 浏览器指纹
+    from curl_cffi import requests as cf_req
     try:
-        with opener.open(req, timeout=timeout) as r:
-            body = r.read().decode(errors="replace")
-            try:
-                return r.status, json.loads(body)
-            except Exception:
-                return r.status, body
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace")
+        r = cf_req.request(method, url, data=form, impersonate="chrome120",
+                           proxies={"https": PROXY, "http": PROXY}, timeout=timeout)
         try:
-            return e.code, json.loads(body)
+            return r.status_code, json.loads(r.text)
         except Exception:
-            return e.code, body
+            return r.status_code, r.text
+    except Exception as e:
+        return 0, {"_http_error": str(e)[:120]}
 
 
 async def _browser_authorize(vuc, sso_jwt):
@@ -53,20 +45,22 @@ async def _browser_authorize(vuc, sso_jwt):
         page = await ctx.new_page()
         try:
             await page.goto(vuc, timeout=40000, wait_until="domcontentloaded")
+            # 2026-08-16: 只点一次「继续」, 之后不再点任何按钮 —
+            # 点错后续按钮会命中拒绝路径 (?denied=1)
             for _ in range(20):
                 await asyncio.sleep(2)
                 if "/device/done" in page.url:
-                    return True
-                for sel in ["button:has-text('继续')", "button:has-text('Allow')",
-                            "button:has-text('允许')", "button:has-text('Continue')",
-                            "button[type=submit]"]:
-                    try:
-                        btn = await page.query_selector(sel)
-                        if btn and await btn.is_visible():
-                            await btn.click()
-                            break
-                    except Exception:
-                        pass
+                    return "denied" not in page.url
+                if "/device/done" not in page.url and "denied" not in page.url:
+                    for sel in ["button:has-text('继续')", "button:has-text('Allow')",
+                                "button:has-text('允许')", "button:has-text('Continue')"]:
+                        try:
+                            btn = await page.query_selector(sel)
+                            if btn and await btn.is_visible():
+                                await btn.click()
+                                break
+                        except Exception:
+                            pass
         except Exception:
             pass
         finally:

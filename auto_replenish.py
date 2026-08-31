@@ -16,6 +16,11 @@ import requests as _requests
 import urllib3
 urllib3.disable_warnings()
 
+# 加载 .env（Clash/代理/grok2api 配置）— 必须在 clash_rotator 等模块 import 前执行
+from dotenv import load_dotenv
+SCRIPT_DIR_ENV = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(SCRIPT_DIR_ENV, ".env"))
+
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -550,8 +555,8 @@ def count_web_available():
         cur.execute(
             "SELECT p.email FROM provider_accounts p "
             "JOIN account_credentials c ON c.account_id = p.id "
-            "WHERE p.provider = 'grok_web' AND p.auth_status = 'active' AND c.refresh_permanent = 0 "
-            "AND p.egress_node_id IS NOT NULL")
+            "WHERE p.provider = 'grok_web' AND p.auth_status = 'active' AND p.enabled = 1 "
+            "AND c.refresh_permanent = 0 AND p.egress_node_id IS NOT NULL")
         emails = [r[0] for r in cur.fetchall()]
         conn.close()
         return len(emails), emails
