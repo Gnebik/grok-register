@@ -157,13 +157,15 @@ These are the models you get immediately after registration — no SuperGrok sub
 | Model | Capability | How to get |
 |---|---|---|
 | `grok-chat-fast` | Chat (fast mode) | SSO token → Web pool |
-| `grok-imagine-image` | Image generation | SSO token → Web pool |
-| `grok-4.5` | Chat + reasoning + search, 1M output tokens | SSO → Device Flow (`sso_to_cpa.py`) → OAuth direct |
+| `grok-imagine-image` | Image generation (lite) | SSO token → Web pool |
+| `grok-4.5` | Chat + reasoning + search, 1M output tokens | SSO → Device Flow (`sso_to_cpa.py`) → Build pool |
 | `grok-4.6` | Chat + reasoning + search, 500K context, long-running agents, `xhigh` reasoning | SSO → Device Flow (`sso_to_cpa.py`) → Build pool |
 
-> ✅ All four models above have been tested and confirmed working end-to-end.
+> ✅ All four models above have been tested and confirmed working end-to-end as of 2026-09-05.
 >
-> **Note**: After Grok 4.6 release, xAI removed `grok-4.5` from the Build pool — it now works via OAuth direct connection. `grok-4.6` is the current Build pool model. Use `remint_oauth.py` to re-mint tokens if xAI revokes them.
+> **Note**: After Grok 4.6 release, xAI temporarily removed `grok-4.5` from the Build pool (8/14), but it has been **reinstated** via CPA auths import API (2026-09-05). Both `grok-4.5` and `grok-4.6` are now available in the Build pool. Use `remint_oauth.py` or the grok2api admin import API to re-mint tokens if xAI revokes them.
+>
+> **Image generation**: Only `grok-imagine-image-lite` is available for free accounts (fixed 832×1248 portrait, basic prompt following). `grok-imagine-image-quality-lite` is currently returning 502 errors. HD/edit/video models require Super subscription.
 
 ### Paid (requires SuperGrok / Heavy subscription)
 
