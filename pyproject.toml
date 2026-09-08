@@ -10,3 +10,8 @@ dependencies = [
     "python-dotenv",
     "requests",
 ]
+
+[project.optional-dependencies]
+cloak = [
+    "cloakbrowser>=0.5.7",
+]

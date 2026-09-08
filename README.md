@@ -9,7 +9,8 @@ Automated account registration toolkit for x.ai (Grok) with SSO token extraction
 - **Auto-replenish daemon** (`auto_replenish.py`) — monitors account pool, registers new accounts on demand, pushes to API gateway
 - **Token refresh daemon** (`token_daemon.py`) — keeps tokens alive
 - **OAuth token re-minting** (`remint_oauth.py`) — re-mints revoked tokens via Device Flow when xAI invalidates refresh tokens
-- **Turnstile solver** (`turnstile_solver_local.py`) — local CAPTCHA solving service
+- **Turnstile solver** (`turnstile_solver_local.py`) — local CAPTCHA solving service (Patchright)
+- **CloakBrowser solver** (`cloakbrowser_solver.py`) — stealth-Chromium CAPTCHA solving service (CloakBrowser)
 - **Email service** (`email_service.py`) — multi-provider support (LuckMail, MailNest)
 - **Clash proxy rotator** (`clash_rotator.py`) — proxy rotation for registration
 
@@ -144,7 +145,27 @@ Re-runs Device Flow with existing SSO tokens to obtain fresh access/refresh toke
 uv run python turnstile_solver_local.py
 ```
 
-Local HTTP service for CAPTCHA solving.
+Local HTTP service for CAPTCHA solving (Patchright + system Chrome).
+
+### Start CloakBrowser solver (stealth)
+
+```bash
+# Install CloakBrowser (once)
+pip install cloakbrowser
+cloakbrowser install
+
+# Start the HTTP service
+uv run python cloakbrowser_solver.py
+```
+
+Uses CloakBrowser's stealth Chromium to pass Cloudflare Turnstile without a paid API.
+Set `GROK_PROXY` env var to route through a proxy (optional).
+
+### One-shot solve with CloakBrowser
+
+```bash
+uv run python cloakbrowser_solver.py --once --url https://example.com --key YOUR_SITE_KEY
+```
 
 ## Supported Models
 
