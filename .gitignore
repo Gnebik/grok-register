@@ -1,5 +1,11 @@
 # Environment
 .env
+.env.bak*
+.env.*.bak
+
+# Backups (contain secrets in .env.bak*; keep all *.bak-* out of the repo)
+*.bak-*
+*.bak
 
 # Secrets & runtime data
 keys/

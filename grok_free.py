@@ -27,14 +27,22 @@ OUTPUT_DIR = os.path.join(SCRIPT_DIR, "keys")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Clash 轮换器（可选，导入失败则跳过 IP 轮换）
-try:
-    from clash_rotator import (random_switch, switch_region, get_current_ip,
-                                health as clash_health, snapshot, restore,
-                                list_fast_nodes)
-    HAS_CLASH = True
-except ImportError:
-    HAS_CLASH = False
-    print("[!] clash_rotator 未找到，IP 轮换功能禁用")
+# Clash 节点轮换已停用 (2026-09-18): 浏览器直接走本机代理 PROXY (7897)。
+# 轮换依赖 Clash 控制口与订阅组，与注册链路无关，属多余一层。
+HAS_CLASH = False
+
+
+def get_current_ip(timeout=10):
+    """通过本机代理查询当前出口 IP（仅用于日志展示）。"""
+    if not PROXY:
+        return "unknown"
+    try:
+        resp = requests.get("https://api.ipify.org?format=json",
+                            proxies={"http": PROXY, "https": PROXY},
+                            timeout=timeout, verify=False)
+        return resp.json().get("ip") or "unknown"
+    except Exception:
+        return "unknown"
 
 # ═══════════════════════ 工具函数 ═══════════════════════
 
@@ -594,25 +602,11 @@ def main():
 
     print("=" * 55)
     print(f"Grok 注册 · 免费版 v4 (GPTMail + gRPC + Clash)")
-    print(f"数量: {args.count}  IP轮换: {'✅' if not args.no_rotate and HAS_CLASH else '❌'}")
+    print(f"数量: {args.count}  代理: {PROXY}")
     print("=" * 55)
 
     # ── Clash: 快照当前节点（注册完恢复） ──
-    original_node = None
-    if not args.no_rotate and HAS_CLASH:
-        try:
-            original_node = snapshot()
-            h = clash_health()
-            # 显示低延迟节点数
-            fast, slow = list_fast_nodes()
-            print(f"[Clash] 快照: {h['current_node'][:40]}")
-            print(f"[Clash] 出口 IP: {h['current_ip']}  ({h['region']})")
-            print(f"[Clash] 低延迟节点: {len(fast)}  慢/断线: {len(slow)}")
-            if slow:
-                for n, reason in slow[:3]:
-                    print(f"[Clash]   ⚠ {n[:35]} — {reason}")
-        except Exception as e:
-            print(f"[Clash] ⚠️ 检查失败: {e}")
+    print(f"[代理] 出口 IP: {get_current_ip()}")
 
     # 1. 浏览器初始化（获取 Turnstile token + Action ID 等），失败重试
     cfg = None
@@ -622,13 +616,7 @@ def main():
             break
         except RuntimeError as e:
             print(f"\n[!] 浏览器初始化失败 (尝试 {retry+1}/3): {e}")
-            if retry < 2 and HAS_CLASH and not args.no_rotate:
-                try:
-                    # 换个区域重试 Turnstile
-                    random_switch()
-                    print(f"[Clash] 切换区域后重试...")
-                except Exception:
-                    pass
+            # 轮换已停用：失败直接等待重试
             time.sleep(5)
     if not cfg:
         print("[!] 浏览器初始化失败，放弃")
@@ -639,8 +627,7 @@ def main():
     fail = 0
     t0 = time.time()
 
-    # 使用过的区域追踪（避免重复用同一区域）
-    used_regions = set()
+    # 使用过的区域追踪（轮换已停用，仅保留占位）
 
     try:
         for i in range(args.count):
@@ -649,17 +636,7 @@ def main():
             print(f"{'─'*40}")
 
             # ── IP 轮换 ──
-            if not args.no_rotate and HAS_CLASH and i > 0 and i % args.rotate_interval == 0:
-                try:
-                    if args.rotate_region:
-                        switch_region(exclude_regions=used_regions)
-                    else:
-                        random_switch()
-                    new_ip = get_current_ip()
-                    if new_ip:
-                        print(f"  [IP] 新出口 IP: {new_ip}")
-                except Exception as e:
-                    print(f"  [IP] ⚠️ 切换失败: {e}，继续使用当前 IP")
+            # IP 轮换已停用 (2026-09-18)：全程走同一本机代理
 
             try:
                 result = register_one(cfg)
@@ -688,11 +665,7 @@ def main():
         if cfg and cfg.get("page"):
             cfg["page"].quit()
         # ── 恢复原始节点 ──
-        if original_node and HAS_CLASH:
-            try:
-                restore(original_node)
-            except Exception as e:
-                print(f"[Clash] ⚠️ 恢复节点失败: {e}")
+        # 轮换已停用，无需恢复节点
 
     elapsed = time.time() - t0
     print(f"\n{'='*55}")

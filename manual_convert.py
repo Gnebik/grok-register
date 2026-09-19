@@ -3,7 +3,7 @@
 """
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-os.environ.setdefault("DEVICE_PROXY", "http://127.0.0.1:7891")
+os.environ.setdefault("DEVICE_PROXY", "http://127.0.0.1:7897")
 
 from device_mint import sso_to_device
 from sso_to_cpa import save_auth

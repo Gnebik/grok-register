@@ -2,7 +2,7 @@
 import os, sys, json, time
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-os.environ.setdefault("GROK_PROXY", "http://127.0.0.1:7891")  # nexitally 干净 IP
+os.environ.setdefault("GROK_PROXY", "http://127.0.0.1:7897")  # 系统 Clash (7891 已于 9/2 停用)
 
 from device_mint import sso_to_device
 from sso_to_cpa import save_auth

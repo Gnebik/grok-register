@@ -58,13 +58,20 @@ except ImportError:
     except ImportError:
         HAS_DIRECT_CONVERT = False
 
-# Clash 轮换器
-try:
-    from clash_rotator import (random_switch, switch_region, get_current_ip,
-                                health as clash_health, snapshot, restore)
-    HAS_CLASH = True
-except ImportError:
-    HAS_CLASH = False
+# Clash 节点轮换已停用 (2026-09-18): 注册/转换/铸造统一走本机代理 PROXY (7897),
+# 不再切换 Clash 节点。轮换需依赖 Clash 控制口与订阅组, 与注册链路无关, 属多余一层。
+HAS_CLASH = False  # 保留常量仅为兼容旧引用；轮换逻辑已全部移除
+
+
+def get_current_ip(timeout=10):
+    """通过本机代理 PROXY 查询当前出口 IP（仅用于日志展示）。"""
+    try:
+        resp = _requests.get("https://api.ipify.org?format=json",
+                             proxies={"http": PROXY, "https": PROXY},
+                             timeout=timeout, verify=False)
+        return resp.json().get("ip") or "unknown"
+    except Exception:
+        return "unknown"
 
 
 # ── IP 洁净度探测 ──
@@ -76,8 +83,8 @@ PROBE_TIMEOUT = 15
 
 
 def probe_ip(ip=None):
-    """通过 Clash 代理探测 accounts.x.ai（grok.py 的真正目标）。"""
-    proxies = {"http": PROXY, "https": PROXY} if HAS_CLASH else None
+    """通过本机代理探测 accounts.x.ai（grok.py 的真正目标）。"""
+    proxies = {"http": PROXY, "https": PROXY}
     for url in PROBE_URLS:
         try:
             resp = _requests.get(url, headers={"User-Agent": "Mozilla/5.0"},
@@ -92,27 +99,7 @@ def probe_ip(ip=None):
     return True, "all clean"
 
 
-def find_clean_ip(max_attempts=10):
-    """轮换 Clash 节点直到找到洁净 IP，返回 IP 或 None。"""
-    if not HAS_CLASH:
-        return None
-    for i in range(max_attempts):
-        try:
-            random_switch()
-        except Exception as e:
-            print(f"  [IP] switch failed: {e}")
-        time.sleep(2)
-        ip = get_current_ip()
-        clean, detail = probe_ip()
-        status = "✅" if clean else "❌"
-        print(f"  [IP] #{i+1} {ip} {status} - {detail}")
-        if clean:
-            return ip
-        time.sleep(1)
-    return None
-
-
-# ── 单号注册（带 IP 重试）──
+# ── 单号注册（带重试）──
 GROK_TXT = os.path.join(SCRIPT_DIR, "keys", "grok.txt")
 ACCOUNTS_TXT = os.path.join(SCRIPT_DIR, "keys", "accounts.txt")
 
@@ -130,9 +117,8 @@ def register_one(script, extra_args, max_retries=5):
     注意：不使用 probe_ip()（requests 库会触发 CF 拦截），
     直接跑 grok.py（curl_cffi 可绕过 CF），从 stdout 判断是否被拦截。"""
     for attempt in range(1, max_retries + 1):
-        if attempt > 1 and HAS_CLASH:
-            print(f"  [RETRY] 换 IP 重试 ({attempt}/{max_retries})...")
-            find_clean_ip(max_attempts=5)
+        if attempt > 1:
+            print(f"  [RETRY] 第 {attempt}/{max_retries} 次重试（走同一本机代理）...")
         else:
             ip = get_current_ip()
             print(f"  [IP] {ip} — 直接运行 grok.py（跳过探测，避免触发 CF 拦截）")
@@ -277,7 +263,7 @@ def register_one_free(script, extra_args, timeout=300):
     before_accts = _file_lines(ACCOUNTS_TXT)
 
     cmd = [sys.executable, script] + extra_args
-    ip = get_current_ip() if HAS_CLASH else "unknown"
+    ip = get_current_ip()
     print(f"  [IP] {ip} (browser mode, skip probe)")
 
     try:
@@ -330,8 +316,7 @@ def convert_sso_list(sso_list):
         print(f"\n转换: {email}")
         for attempt in range(1, 4):
             if attempt > 1:
-                print(f"  [RETRY] 换 IP 重试 ({attempt}/3)...")
-                find_clean_ip(max_attempts=5)
+                print(f"  [RETRY] 第 {attempt}/3 次重试（走同一本机代理）...")
             result = _sso_to_cpa_direct(sso, email)
             if result:
                 save_auth(email, result)
@@ -342,26 +327,6 @@ def convert_sso_list(sso_list):
             time.sleep(2)
     print(f"\n转换结束: {success}/{len(sso_list)} 成功")
     return success
-    """运行 sso_to_cpa.py --all 转换所有 SSO → CPA"""
-    print(f"\n{'='*50}")
-    print(f"[STEP 2/3] SSO → CPA 转换...")
-    print(f"{'='*50}")
-
-    try:
-        result = subprocess.run(
-            [sys.executable, SSO_TO_CPA, "--all"],
-            cwd=SCRIPT_DIR,
-            capture_output=False,
-            text=True,
-            timeout=300,
-        )
-        return result.returncode == 0
-    except subprocess.TimeoutExpired:
-        print("[AUTO] ⏰ 转换超时")
-        return False
-    except Exception as e:
-        print(f"[AUTO] ❌ 转换异常: {e}")
-        return False
 
 
 def _grok2api_login():
@@ -581,15 +546,6 @@ def replenish(min_accounts=2, rotate_region=False, use_free=False):
         run_token_refresh()
         return True
 
-    # ── 快照当前节点 ──
-    original_node = None
-    if HAS_CLASH:
-        try:
-            original_node = snapshot()
-            print(f"[IP] 快照节点: {original_node[:40]}")
-        except Exception as e:
-            print(f"[IP] ⚠️ 快照失败: {e}")
-
     shortage = max(min_accounts - count, min_accounts - web_count)
     to_register = min(shortage + 1, 5)
     print(f"  ⚠️ 账号不足 ({count}<{min_accounts})，需补 {shortage} 个（将注册 {to_register} 个）")
@@ -644,12 +600,7 @@ def replenish(min_accounts=2, rotate_region=False, use_free=False):
             return False
 
     finally:
-        # ── 恢复原始节点 ──
-        if original_node and HAS_CLASH:
-            try:
-                restore(original_node)
-            except Exception as e:
-                print(f"[IP] ⚠️ 恢复节点失败: {e}")
+        pass
 
 
 def main():
@@ -673,18 +624,8 @@ def main():
         for e in web_emails:
             print(f"  ✅ {e}")
 
-        if HAS_CLASH:
-            try:
-                h = clash_health()
-                if h["ok"]:
-                    print(f"\nClash 代理: ✅")
-                    print(f"  当前节点: {h['current_node'][:50]}")
-                    print(f"  出口 IP: {h['current_ip']}")
-                    print(f"  区域: {h['region']}")
-                else:
-                    print(f"\nClash 代理: ❌ {h.get('error','?')}")
-            except Exception as e:
-                print(f"\nClash 代理: ❌ {e}")
+        ip = get_current_ip()
+        print(f"\n本机代理出口 IP: {ip}")
         return
 
     if args.refresh_only:

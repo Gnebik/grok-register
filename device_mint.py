@@ -13,8 +13,9 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
 SCOPE = "openid profile email offline_access grok-cli:access api:access"
-# auth.x.ai 实测: 7891 通、7897/CLIPROXY 被 RST; 注册(accounts.x.ai)走 GROK_PROXY 默认 7897 通
-PROXY = os.getenv("DEVICE_PROXY") or os.getenv("GROK_PROXY") or "http://127.0.0.1:7891"
+# auth.x.ai 出口: 2026-09-17 实测 7897 可达 (curl_cffi chrome120 -> 400 invalid_grant = 端点通);
+# 原 7891 独立实例已于 9/2 停用, 实测 ConnectionError (端口无监听), 不再作兜底
+PROXY = os.getenv("DEVICE_PROXY") or os.getenv("GROK_PROXY") or "http://127.0.0.1:7897"
 
 
 def _http_json(url, method="GET", form=None, timeout=40):
