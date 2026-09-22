@@ -15,6 +15,125 @@ Automated account registration toolkit for x.ai (Grok) with SSO token extraction
 - **Email service** (`email_service.py`) — multi-provider support (LuckMail, MailNest)
 - **Clash proxy rotator** (`clash_rotator.py`) — ⚠️ **no longer wired into the pipeline** (rotation removed 2026-09-18; registration/minting now use a single static proxy via `GROK_PROXY`). File retained for reference only.
 
+## Architecture
+
+> Deliberately abstract: this section explains **why the system is shaped this way**.
+> Host addresses, node identifiers, proxy providers and pool sizes are intentionally
+> omitted — see the source for operational detail.
+
+### Separation of concerns
+
+This repository owns **account acquisition and lifecycle**. A gateway
+([grok2api](https://github.com/chenyme/grok2api)) owns **routing and load-balancing**,
+and may itself sit behind a multi-channel proxy layer. The handoff between the two is a
+directory of credential files: this repo writes them, the gateway imports them.
+
+Keeping those apart means the acquisition logic never needs to know about request
+routing, and the gateway never needs to know how an account was obtained.
+
+### The two pools
+
+Accounts land in one of two pools, and they are **not interchangeable**:
+
+| Pool | Credential path | Serves | Notes |
+|---|---|---|---|
+| **Web** | SSO pushed directly | Chat + image models | No OAuth conversion required |
+| **Build** | SSO → OAuth → token | Frontier reasoning models | Needs a successful OAuth exchange |
+
+The split exists because the two upstream surfaces authenticate differently and expose
+different capabilities. The practical consequence is isolation: a failure in the OAuth
+path degrades the Build pool without touching the Web pool, and vice versa.
+
+### Pipeline
+
+```
+  acquire                      mint                       pool
+  ───────                      ────                       ────
+  ┌────────────────────┐   ┌──────────────────────┐   ┌──────────────────┐
+  │ registration engine│   │ OAuth exchange       │   │ gateway:         │
+  │  · solver-backed   │──▶│  · PKCE (primary)    │──▶│   Build pool     │
+  │  · browser-backed  │   │  · Device (fallback) │   └──────────────────┘
+  └────────────────────┘   └──────────────────────┘
+            │                                                  ▲
+            │  SSO — usable as-is, no OAuth needed             │
+            └──────────────────────────────────────────────────┘
+                    direct push → Web pool  (+ egress binding)
+
+  ┌──────────────────────────────────────────────────────────┐
+  │ replenisher: counts both pools → decides whether to act   │
+  │ token daemon: refreshes before expiry                     │
+  │ re-mint: rebuilds credentials whose refresh token died    │
+  └──────────────────────────────────────────────────────────┘
+```
+
+### Design decisions and tradeoffs
+
+**Fail-soft ordering — the cheap path runs first.**
+The pipeline pushes the Web pool before attempting OAuth. The Web push only needs the
+SSO token, which registration already produced; the Build push depends on an OAuth
+exchange that can fail. Ordering it this way means a partial failure still yields usable
+accounts instead of nothing. The cost is that a silently failing OAuth step leaves the
+Build pool lagging while the Web pool looks healthy — the two counts must be read
+separately to notice.
+
+**Two registration engines — a cost/reliability dial.**
+A solver-backed engine (paid CAPTCHA API, HTTP-only) is the default because it has the
+higher success rate and runs faster. A browser-backed engine (headless-capable stealth
+browser, solves the challenge in-page) exists as a free fallback. Neither is strictly
+better: the paid path costs money per attempt, the browser path is several times slower
+and needs a real rendering environment. The choice is exposed as a flag rather than
+hard-coded, so the operator can trade cost against reliability per situation.
+
+**Two OAuth flows — one is fragile, the other is heavier.**
+The PKCE flow is lighter but was blocked by the upstream bot filter, so a Device
+Authorization Grant flow was added as the primary path: it drives a real browser session
+through the consent screen. Maintaining two flows is more code, but the alternative —
+depending on the one the filter blocks — was a hard outage. The selection falls back
+automatically when the preferred module is unavailable.
+
+**Egress binding is a hard precondition, not an optimisation.**
+A Web-pool account is only counted as *available* once it has an egress node assigned.
+An imported-but-unbound account exists in the database yet is invisible to the
+replenisher, so it will never be used and never be counted — the pool looks smaller than
+it is. Binding is therefore part of the import path, not a separate maintenance step.
+
+**Thresholds carry headroom, and batches are capped.**
+The replenisher triggers on the *worse* of the two pools rather than either one, so a
+healthy pool cannot mask a starving one. It then registers one more than the shortfall —
+attrition between checks is expected — and caps the batch size regardless of how large
+the shortfall is. The cap is deliberate: registering in bulk is exactly the pattern
+upstream anti-abuse systems look for.
+
+**Two-tier token recovery.**
+Expiring credentials are refreshed in place before they lapse; credentials whose
+*refresh* token has been revoked cannot be refreshed at all and are re-minted from the
+original SSO. The second path is strictly more expensive, which is why refresh runs
+continuously and re-minting is an explicit operation.
+
+**Imports are sequential.**
+Batch uploads were measured to fail far more often than one-at-a-time uploads against
+the same endpoint, so the pipeline trades round-trips for reliability.
+
+### Removed by choice: proxy rotation
+
+An earlier version rotated the outbound proxy between registrations. It was removed
+because rotation depended on a separate proxy controller and its subscription groups —
+infrastructure with no relationship to account registration — making the pipeline
+sensitive to failures in a system it did not own. Registration and minting now share one
+static outbound proxy.
+
+The tradeoff is real and accepted: less IP diversity during registration means more
+exposure to anti-abuse heuristics. It was judged worth removing a whole class of
+unrelated failure modes.
+
+### What this repository does not do
+
+- **No request routing.** It does not proxy inference traffic; the gateway does.
+- **No load balancing.** Choosing which account serves a request is the gateway's job.
+- **No model-name logic.** Model availability is discovered by the gateway at runtime,
+  so a new upstream model needs no change here.
+
+
 ## Prerequisites
 
 - Python 3.12+
