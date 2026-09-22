@@ -5,14 +5,15 @@ Automated account registration toolkit for x.ai (Grok) with SSO token extraction
 ## Features
 
 - **Account registration** (`grok.py`) — curl_cffi-based engine, supports YesCaptcha for Turnstile solving
-- **SSO → CPA token minting** (`sso_to_cpa.py`) — OAuth Device Flow with corrected scope, converts SSO tokens to access/refresh tokens
+- **SSO → CPA token minting** (`sso_to_cpa.py`) — OAuth **PKCE** flow (with consent-form submit), converts SSO tokens to access/refresh tokens
+- **Device Flow minting** (`device_mint.py`) — OAuth 2.0 Device Authorization Grant, the fallback path used by the re-mint helper when PKCE is blocked by Cloudflare
 - **Auto-replenish daemon** (`auto_replenish.py`) — monitors account pool, registers new accounts on demand, pushes to API gateway
 - **Token refresh daemon** (`token_daemon.py`) — keeps tokens alive
-- **OAuth token re-minting** (`remint_oauth.py`) — re-mints revoked tokens via Device Flow when xAI invalidates refresh tokens
+- **OAuth token re-minting** (`remint_oauth.py`) — re-mints revoked tokens when xAI invalidates them; delegates to `device_mint.py` (Device Flow)
 - **Turnstile solver** (`turnstile_solver_local.py`) — local CAPTCHA solving service (Patchright)
 - **CloakBrowser solver** (`cloakbrowser_solver.py`) — stealth-Chromium CAPTCHA solving service (CloakBrowser)
 - **Email service** (`email_service.py`) — multi-provider support (LuckMail, MailNest)
-- **Clash proxy rotator** (`clash_rotator.py`) — proxy rotation for registration
+- **Clash proxy rotator** (`clash_rotator.py`) — ⚠️ **no longer wired into the pipeline** (rotation removed 2026-09-18; registration/minting now use a single static proxy via `GROK_PROXY`). File retained for reference only.
 
 ## Prerequisites
 
@@ -60,6 +61,8 @@ Copy `.env.example` to `.env` and fill in:
 | `GROK2API_USER` | No | API gateway admin user (default: `admin`) |
 | `GROK2API_PASS` | No | API gateway admin password |
 | `GROK_PROXY` | No | HTTP proxy for registration (default: `http://127.0.0.1:7897`) |
+| `DEVICE_PROXY` | No | Proxy used by `device_mint.py` (falls back to `GROK_PROXY`) |
+| `CPA_AUTHS_DIR` | No | Output dir for minted CPA auth files (default: `D:\CLIProxyAPIPlus\auths`) |
 
 ### Email providers (email domains matter for xAI)
 
@@ -181,12 +184,13 @@ These are the models you get immediately after registration — no SuperGrok sub
 | `grok-imagine-image` | Image generation (lite) | SSO token → Web pool |
 | `grok-4.5` | Chat + reasoning + search, 1M output tokens | SSO → Device Flow (`sso_to_cpa.py`) → Build pool |
 | `grok-4.6` | Chat + reasoning + search, 500K context, long-running agents, `xhigh` reasoning | SSO → Device Flow (`sso_to_cpa.py`) → Build pool |
+| `grok-4.7` | Chat + reasoning + search, 500K context, `xhigh` reasoning, 2.1T params (released 2026-09-21) | SSO → Device Flow (`sso_to_cpa.py`) → Build pool |
 
-> ✅ All four models above have been tested and confirmed working end-to-end as of 2026-09-05.
+> ✅ Models above verified working end-to-end as of 2026-09-22 (Build pool: `grok-4.7` / `grok-4.6` / `grok-4.5`).
 >
-> **Note**: After Grok 4.6 release, xAI temporarily removed `grok-4.5` from the Build pool (8/14), but it has been **reinstated** via CPA auths import API (2026-09-05). Both `grok-4.5` and `grok-4.6` are now available in the Build pool. Use `remint_oauth.py` or the grok2api admin import API to re-mint tokens if xAI revokes them.
+> **Note**: After the Grok 4.6 release, xAI temporarily removed `grok-4.5` from the Build pool (8/14), but it was **reinstated** via the CPA auths import API (2026-09-05). `grok-4.7` was added on 2026-09-21 and needs no client-side upgrade — grok2api discovers the model catalog from upstream at runtime. Use `remint_oauth.py` or the grok2api admin import API to re-mint tokens if xAI revokes them.
 >
-> **Image generation**: Only `grok-imagine-image-lite` is available for free accounts (fixed 832×1248 portrait, basic prompt following). `grok-imagine-image-quality-lite` is currently returning 502 errors. HD/edit/video models require Super subscription.
+> **Image generation** (re-verified 2026-09-22): `grok-imagine-image-lite`, `grok-imagine-image` and `grok-imagine-image-2.0` all return real JPEGs (HTTP 200, `ffd8ff` magic). **`grok-imagine-image-quality-lite` no longer exists — the model id returns HTTP 404 `model_not_found`.** Image editing / HD / video require a Super subscription. Output is portrait ~2:3 (832×1248) with basic prompt following.
 
 ### Paid (requires SuperGrok / Heavy subscription)
 
@@ -203,9 +207,18 @@ The following models are available in the codebase but require a paid account ti
 
 Other Build/Console models available via Device Flow: `grok-4.3`, `grok-4.20-0309-reasoning`, `grok-4.20-0309-non-reasoning`, `grok-4.20-multi-agent-0309`, `grok-build-0.1` (code/composer, 256K output).
 
-## OAuth Device Flow
+## OAuth flows
 
-The `sso_to_cpa.py` script implements OAuth 2.0 Device Flow with the corrected scope:
+Two flows are implemented; pick based on whether Cloudflare blocks the consent page:
+
+| Flow | Script | Mechanism | When to use |
+|---|---|---|---|
+| **PKCE** (primary) | `sso_to_cpa.py` | `response_type=code` + `code_challenge` (S256), submits the OAuth consent form via `curl_cffi` | Default path |
+| **Device Authorization Grant** (fallback) | `device_mint.py` | `urn:ietf:params:oauth:grant-type:device_code` with headed Chrome to auto-approve | When PKCE is CF-blocked |
+
+`remint_oauth.py` re-mints revoked tokens through the Device Flow path (`device_mint.sso_to_device`).
+
+Both flows request the corrected scope:
 
 ```
 openid profile email offline_access grok-cli:access api:access
